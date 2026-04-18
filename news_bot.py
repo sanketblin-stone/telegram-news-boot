@@ -2,6 +2,7 @@
 import asyncio
 import feedparser
 import requests
+import pytz
 from datetime import time
 from telegram import Update
 from telegram.ext import (
@@ -148,7 +149,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     job_queue = app.job_queue
-    job_queue.run_daily(daily_digest, time=time(21, 0, 0))
+    # Set to 9 PM Central European Time (CET)
+    cet_tz = pytz.timezone("CET")
+    job_queue.run_daily(daily_digest, time=time(21, 0, 0, tzinfo=cet_tz))
 
     print("Bot is running...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
