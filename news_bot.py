@@ -46,6 +46,24 @@ def fetch_news():
     return news
 
 
+def search_news(query):
+    """Looks for a specific word in all news categories."""
+    query = query.lower()
+    results = []
+    for category, feed_url in RSS_FEEDS.items():
+        feed = feedparser.parse(feed_url)
+        for entry in feed.entries:
+            if query in entry.title.lower():
+                results.append(
+                    {
+                        "title": entry.title,
+                        "link": to_archive_link(entry.link),
+                        "category": category,
+                    }
+                )
+    return results
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "I'm your news bot! Send /ping to test, or ask 'whats the news for today'"
@@ -71,13 +89,40 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.lower()
-    if "whats the news for today" in text or "what's the news for today" in text:
+    text = update.message.text
+    text_lower = text.lower()
+
+    if (
+        "whats the news for today" in text_lower
+        or "what's the news for today" in text_lower
+    ):
         await news_command(update, context)
-    elif "archive" in text and "nyt" in text:
+        return
+
+    if "nytimes.com" in text_lower:
+        import re
+
+        links = re.findall(r"(https?://[^\s]+)", text)
+        for link in links:
+            if "nytimes.com" in link:
+                archive_link = to_archive_link(link)
+                await update.message.reply_text(
+                    f"🔗 Here is your archive link:\n{archive_link}"
+                )
+        return
+
+    await update.message.reply_text(f"Searching for news about '{text}'...")
+    search_results = search_news(text)
+
+    if not search_results:
         await update.message.reply_text(
-            "Send me an NYT article link and I'll give you an archive.ph link!"
+            f"Sorry, I couldn't find any recent articles about '{text}'."
         )
+    else:
+        message = f"🔍 *Search Results for '{text}'*\n\n"
+        for item in search_results[:5]:
+            message += f"*{item['category']}:* {item['title']}\n🔗 {item['link']}\n\n"
+        await update.message.reply_text(message, parse_mode="Markdown")
 
 
 async def daily_digest(context: ContextTypes.DEFAULT_TYPE):
