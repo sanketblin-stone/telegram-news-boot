@@ -26,7 +26,7 @@ processed_links = set()
 
 
 def to_archive_link(url):
-    return f"https://archive.ph/{url}"
+    return f"https://archive.is/newest/{url}"
 
 
 def fetch_news():
