@@ -55,8 +55,10 @@ processed_links = set()
 
 
 def normalize_title(title):
-    """Lowercases a title and collapses extra whitespace for cleaner comparison."""
-    return re.sub(r"\s+", " ", title.lower()).strip()
+    """Lowercases a title, removes punctuation, and collapses extra whitespace."""
+    # Remove common punctuation that causes fake mismatches
+    text = re.sub(r"[!?:,\"\'-()|]", "", title.lower())
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def to_archive_link(url):
@@ -138,11 +140,15 @@ async def find_on_dnyuz(target_title, category=None):
             if not found_link or not found_title or "dnyuz.com" not in found_link:
                 continue
 
-            similarity = fuzz.token_sort_ratio(
-                normalized_target, normalize_title(found_title)
-            )
+            norm_found = normalize_title(found_title)
+            # Compare both methods to see which works better for news
+            sort_sim = fuzz.token_sort_ratio(normalized_target, norm_found)
+            set_sim = fuzz.token_set_ratio(normalized_target, norm_found)
+
+            # Use token_set_ratio as our primary score (it's more forgiving)
+            similarity = set_sim
             print(
-                f"[DEBUG] Result {i}: {similarity}% match (token_sort) for '{found_title[:60]}'"
+                f"[DEBUG] Result {i}: set={set_sim}% (sort={sort_sim}%) for '{found_title[:60]}'"
             )
 
             if similarity > best_similarity:
