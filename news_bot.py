@@ -93,8 +93,8 @@ async def find_on_dnyuz(target_title, category=None):
     # Build dnyuz search URL. urllib.parse.quote_plus handles spaces and special chars.
     from urllib.parse import quote_plus
 
-    # Keep first 10 words of title as search query — long queries return poor results on dnyuz.
-    search_query = " ".join(target_title.split()[:10])
+    # Keep first 5 words of title as search query — shorter queries match better on dnyuz.
+    search_query = " ".join(target_title.split()[:5])
     search_url = f"https://dnyuz.com/?s={quote_plus(search_query)}"
 
     try:
