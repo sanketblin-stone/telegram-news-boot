@@ -39,11 +39,13 @@ def normalize_title(title):
 
 def find_on_dnyuz(target_title):
     """
-    Searches dnyuz.com for a matching title.
+    Searches dnyuz.com for a matching title using a shortened "hook" query.
     Returns the dnyuz link if a match (>90%) is found, else None.
     """
     try:
-        search_url = f"https://dnyuz.com/?s={requests.utils.quote(target_title)}"
+        # Use only first 6 words for a more reliable search result on dnyuz
+        search_query = " ".join(target_title.split()[:6])
+        search_url = f"https://dnyuz.com/?s={requests.utils.quote(search_query)}"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(search_url, headers=headers, timeout=10)
 
@@ -51,7 +53,6 @@ def find_on_dnyuz(target_title):
             return None
 
         soup = BeautifulSoup(response.text, "html.parser")
-        # dnyuz search results usually have titles in <h3> or <h2> tags with class 'entry-title'
         articles = soup.find_all(["h2", "h3"], class_="entry-title")
 
         normalized_target = normalize_title(target_title)
@@ -64,9 +65,9 @@ def find_on_dnyuz(target_title):
             found_title = link_tag.get_text()
             found_link = link_tag.get("href")
 
-            # Fuzzy match check
+            # Fuzzy match check against the FULL original title
             similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
-            if similarity > 90:
+            if similarity > 85:  # Slightly lowered to 85% to be more forgiving
                 return found_link
 
     except Exception as e:
@@ -87,15 +88,21 @@ def fetch_news():
         # Get top 2 from each feed to prevent timeouts
         for entry in feed.entries[:2]:
             if entry.link not in processed_links:
-                # Logic: Check dnyuz (Homelander) first, else Archive.is
-                dnyuz_link = find_on_dnyuz(entry.title)
+                # Logic: Only check dnyuz for NYT and Atlantic
+                dnyuz_link = None
+                if "NYT" in category or "Atlantic" in category:
+                    dnyuz_link = find_on_dnyuz(entry.title)
 
                 if dnyuz_link:
                     final_link = dnyuz_link
                     link_label = "✅ (Homelander)"
                 else:
                     final_link = to_archive_link(entry.link)
-                    link_label = "🔗 (Archive Fallback)"
+                    # Label it differently if we skipped the search vs if search failed
+                    if "NYT" in category or "Atlantic" in category:
+                        link_label = "🔗 (Archive Fallback)"
+                    else:
+                        link_label = "🔗 (Archive)"
 
                 news.append(
                     {
