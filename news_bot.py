@@ -1,9 +1,11 @@
-#!/usr/bin/env python3
 import asyncio
 import feedparser
 import requests
 import pytz
+import re
 from datetime import time
+from bs4 import BeautifulSoup
+from thefuzz import fuzz
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -16,13 +18,61 @@ from telegram.ext import (
 BOT_TOKEN = "8785893403:AAFxihc1urBoZQ_vizwlvA-ed1mZh23f8tk"
 MY_CHAT_ID = "6794301814"
 
+# Expanded RSS Feeds for Phase 2
 RSS_FEEDS = {
-    "World": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
-    "Business": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
-    "Technology": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+    "NYT World": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+    "NYT Business": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+    "NYT Tech": "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+    "NYT India": "https://rss.nytimes.com/services/xml/rss/nyt/India.xml",
+    "NYT Lifestyle": "https://rss.nytimes.com/services/xml/rss/nyt/PersonalTech.xml",
+    "The Atlantic": "https://www.theatlantic.com/feed/all/",
+    "Financial Times": "https://www.ft.com/news-feed?format=rss",
 }
 
 processed_links = set()
+
+
+def normalize_title(title):
+    """Cleans up titles for better matching (lowercase, remove extra spaces)."""
+    return re.sub(r"\s+", " ", title.lower()).strip()
+
+
+def find_on_dnyuz(target_title):
+    """
+    Searches dnyuz.com for a matching title.
+    Returns the dnyuz link if a match (>90%) is found, else None.
+    """
+    try:
+        search_url = f"https://dnyuz.com/?s={requests.utils.quote(target_title)}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(search_url, headers=headers, timeout=10)
+
+        if response.status_code != 200:
+            return None
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        # dnyuz search results usually have titles in <h3> or <h2> tags with class 'entry-title'
+        articles = soup.find_all(["h2", "h3"], class_="entry-title")
+
+        normalized_target = normalize_title(target_title)
+
+        for article in articles:
+            link_tag = article.find("a")
+            if not link_tag:
+                continue
+
+            found_title = link_tag.get_text()
+            found_link = link_tag.get("href")
+
+            # Fuzzy match check
+            similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
+            if similarity > 90:
+                return found_link
+
+    except Exception as e:
+        print(f"Error searching dnyuz: {e}")
+
+    return None
 
 
 def to_archive_link(url):
@@ -33,14 +83,21 @@ def fetch_news():
     news = []
     for category, feed_url in RSS_FEEDS.items():
         feed = feedparser.parse(feed_url)
-        for entry in feed.entries[:5]:
+        # Get top 3 from each feed to keep it manageable
+        for entry in feed.entries[:3]:
             if entry.link not in processed_links:
+                # Logic: Check dnyuz (Homelander) first, else Archive.is
+                dnyuz_link = find_on_dnyuz(entry.title)
+                final_link = dnyuz_link if dnyuz_link else to_archive_link(entry.link)
+                is_homelander = "✅ (Homelander)" if dnyuz_link else "🔗 (Archive)"
+
                 news.append(
                     {
                         "title": entry.title,
-                        "link": to_archive_link(entry.link),
+                        "link": final_link,
                         "category": category,
                         "original_link": entry.link,
+                        "link_type": is_homelander,
                     }
                 )
                 processed_links.add(entry.link)
@@ -55,10 +112,13 @@ def search_news(query):
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
             if query in entry.title.lower():
+                dnyuz_link = find_on_dnyuz(entry.title)
+                final_link = dnyuz_link if dnyuz_link else to_archive_link(entry.link)
+
                 results.append(
                     {
                         "title": entry.title,
-                        "link": to_archive_link(entry.link),
+                        "link": final_link,
                         "category": category,
                     }
                 )
@@ -67,26 +127,34 @@ def search_news(query):
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "I'm your news bot! Send /ping to test, or ask 'whats the news for today'"
+        "I'm your Phase 2 News Bot! I now check NYT, The Atlantic, and FT.\n\n"
+        "I'll try to find cleaner 'Homelander' links first, otherwise I'll give you an archive link."
     )
 
 
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("I'm awake, Sankey!")
+    await update.message.reply_text("I'm awake and vibe coding, Sankey!")
 
 
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Fetching latest news...")
+    await update.message.reply_text("Fetching latest news from all sources...")
     news_items = fetch_news()
     if not news_items:
-        await update.message.reply_text("No new news found!")
+        await update.message.reply_text("No new news found in any of the feeds!")
         return
 
-    message = "📰 *Today's NYT News*\n\n"
+    message = "📰 *Today's Multi-Source News*\n\n"
     for item in news_items:
-        message += f"*{item['category']}:* {item['title']}\n🔗 {item['link']}\n\n"
+        message += f"*{item['category']}:* {item['title']}\n{item['link_type']} {item['link']}\n\n"
 
-    await update.message.reply_text(message, parse_mode="Markdown")
+    # Telegram has a limit on message length, so we might need to split this if it gets too long
+    if len(message) > 4000:
+        for i in range(0, len(message), 4000):
+            await update.message.reply_text(
+                message[i : i + 4000], parse_mode="Markdown"
+            )
+    else:
+        await update.message.reply_text(message, parse_mode="Markdown")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,20 +164,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if (
         "whats the news for today" in text_lower
         or "what's the news for today" in text_lower
+        or text_lower == "news"
     ):
         await news_command(update, context)
         return
 
-    if "nytimes.com" in text_lower:
-        import re
-
+    # Handle direct links sent by Sankey
+    if any(
+        domain in text_lower
+        for domain in ["nytimes.com", "theatlantic.com", "ft.com", "bloomberg.com"]
+    ):
         links = re.findall(r"(https?://[^\s]+)", text)
         for link in links:
-            if "nytimes.com" in link:
-                archive_link = to_archive_link(link)
-                await update.message.reply_text(
-                    f"🔗 Here is your archive link:\n{archive_link}"
-                )
+            await update.message.reply_text("Checking if I can find a clean version...")
+            # We don't have the title for direct links easily, so we just archive it
+            # But in the future, we could fetch the title from the link first
+            archive_link = to_archive_link(link)
+            await update.message.reply_text(
+                f"🔗 Here is your archive link:\n{archive_link}"
+            )
         return
 
     await update.message.reply_text(f"Searching for news about '{text}'...")
@@ -131,13 +204,19 @@ async def daily_digest(context: ContextTypes.DEFAULT_TYPE):
     if not news_items:
         return
 
-    message = "📰 *Your Daily NYT Digest*\n\n"
+    message = "📰 *Your Phase 2 Daily Digest*\n\n"
     for item in news_items:
-        message += f"*{item['category']}:* {item['title']}\n🔗 {item['link']}\n\n"
+        message += f"*{item['category']}:* {item['title']}\n{item['link_type']} {item['link']}\n\n"
 
-    await context.bot.send_message(
-        chat_id=MY_CHAT_ID, text=message, parse_mode="Markdown"
-    )
+    if len(message) > 4000:
+        for i in range(0, len(message), 4000):
+            await context.bot.send_message(
+                chat_id=MY_CHAT_ID, text=message[i : i + 4000], parse_mode="Markdown"
+            )
+    else:
+        await context.bot.send_message(
+            chat_id=MY_CHAT_ID, text=message, parse_mode="Markdown"
+        )
 
 
 def main():
@@ -149,7 +228,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     job_queue = app.job_queue
-    # Set to 9 PM Central European Time (CET)
     cet_tz = pytz.timezone("CET")
     job_queue.run_daily(daily_digest, time=time(21, 0, 0, tzinfo=cet_tz))
 
