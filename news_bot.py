@@ -14,13 +14,14 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.service import Service as ChromeService
+# Selenium disabled - see find_on_dnyuz() for details
+# from selenium import webdriver
+# from selenium.webdriver.common.by import By
+# from selenium.webdriver.support.ui import WebDriverWait
+# from selenium.webdriver.support import expected_conditions as EC
+# from selenium.webdriver.chrome.options import Options
+# from webdriver_manager.chrome import ChromeDriverManager
+# from selenium.webdriver.chrome.service import Service as ChromeService
 
 BOT_TOKEN = "8785893403:AAFxihc1urBoZQ_vizwlvA-ed1mZh23f8tk"
 MY_CHAT_ID = "6794301814"
@@ -61,13 +62,13 @@ def normalize_title(title):
 
 def find_on_dnyuz(target_title, category):
     """
-    Uses Selenium with Chromium to load Dnyuz author page and find matching articles.
-    Handles JavaScript-rendered content properly.
+    Homelander feature currently disabled on Railway due to Selenium/Chrome setup issues.
+    Falls back to Archive links for all articles.
+    TODO: Consider alternative approaches (Playwright, Puppeteer, or static scraping workarounds)
     """
-    author_slug = SOURCE_MAPPING.get(category)
-    if not author_slug:
-        print(f"[DEBUG] No dnyuz mapping for {category}")
-        return None
+    # For now, return None to always use Archive links
+    # Homelander matching requires JavaScript rendering which is problematic on Railway
+    return None
 
     driver = None
     try:
