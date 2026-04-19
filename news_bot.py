@@ -334,8 +334,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Otherwise treat the message as a search query
-    await update.message.reply_text(f"Searching for news about '{text}'...")
+
+    # Step 1: Send a status message immediately so Telegram knows we're alive.
+    # We'll edit this message every 10 seconds to show elapsed time.
+    # This prevents Telegram from timing out and re-triggering the handler.
+    status_msg = await update.message.reply_text(
+        f"Searching for news about '{text}'... (0s)"
+    )
+
+    # Step 2: Start a background task that updates the status message every 10 seconds.
+    # Think of it like a "still cooking..." notification while the kitchen is busy.
+    search_done = asyncio.Event()  # A flag — we set it to True when search finishes.
+
+    async def update_status():
+        elapsed = 0
+        while not search_done.is_set():
+            await asyncio.sleep(10)
+            elapsed += 10
+            if not search_done.is_set():
+                try:
+                    await status_msg.edit_text(
+                        f"Searching for news about '{text}'... ({elapsed}s)"
+                    )
+                except Exception:
+                    pass  # If editing fails (e.g. message deleted), just ignore it.
+
+    # Fire off the status updater in the background — it runs independently.
+    status_task = asyncio.create_task(update_status())
+
+    # Step 3: Run the full search (including ALL browserless lookups) and wait for it to finish.
     search_results = await search_news(text)
+
+    # Step 4: Signal that the search is done — this stops the status updater.
+    search_done.set()
+    status_task.cancel()
+
+    # Step 5: Edit the status message to show we're done, then send final results.
+    await status_msg.edit_text(f"Search complete for '{text}'. Here are the results:")
 
     if not search_results:
         await update.message.reply_text(f"No recent articles found about '{text}'.")
@@ -343,7 +378,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = f"🔍 *Search: '{escape_markdown(text)}'*\n\n"
         for item in search_results[:5]:
             safe_title = escape_markdown(item["title"])
-            message += f"*{item['category']}:* {safe_title}\n🔗 {item['link']}\n\n"
+            link_label = "✅" if "dnyuz.com" in item["link"] else "🔗"
+            message += (
+                f"*{item['category']}:* {safe_title}\n{link_label} {item['link']}\n\n"
+            )
         await update.message.reply_text(message, parse_mode="Markdown")
 
 
