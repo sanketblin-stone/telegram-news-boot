@@ -138,8 +138,12 @@ async def find_on_dnyuz(target_title, category=None):
             if not found_link or not found_title or "dnyuz.com" not in found_link:
                 continue
 
-            similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
-            print(f"[DEBUG] Result {i}: {similarity}% match for '{found_title[:60]}'")
+            similarity = fuzz.token_sort_ratio(
+                normalized_target, normalize_title(found_title)
+            )
+            print(
+                f"[DEBUG] Result {i}: {similarity}% match (token_sort) for '{found_title[:60]}'"
+            )
 
             if similarity > best_similarity:
                 best_similarity = similarity
@@ -246,9 +250,10 @@ async def search_news(query):
     if not matches:
         return []
 
-    # Step 2: Run all dnyuz lookups in parallel instead of one by one.
-    # asyncio.gather fires them off simultaneously and waits for all to finish.
-    async def process_match(match_dict):
+    # Step 2: Run all dnyuz lookups in parallel with a tiny staggered delay to avoid 429 errors.
+    async def process_match(match_dict, index):
+        # Stagger the start of each task by 1 second to avoid overwhelming Browserless
+        await asyncio.sleep(index * 1.0)
         entry = match_dict["entry"]
         category = match_dict["category"]
         dnyuz_link = await find_on_dnyuz(entry.title, category)
@@ -259,7 +264,10 @@ async def search_news(query):
             "category": category,
         }
 
-    results = await asyncio.gather(*[process_match(m) for m in matches])
+    results = await asyncio.gather(
+        *[process_match(m, i) for i, m in enumerate(matches)]
+    )
+    print(f"[INFO] Search complete for query: {query}")
     return results
 
 
