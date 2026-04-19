@@ -20,7 +20,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.service import Service as ChromeService
 
 BOT_TOKEN = "8785893403:AAFxihc1urBoZQ_vizwlvA-ed1mZh23f8tk"
 MY_CHAT_ID = "6794301814"
@@ -74,7 +74,7 @@ def find_on_dnyuz(target_title, category):
         author_url = f"https://dnyuz.com/author/{author_slug}/"
         print(f"[DEBUG] Selenium: Loading {author_url} for: {target_title[:50]}...")
 
-        # Set up Chromium options for headless mode
+        # Set up Chrome options for headless mode
         chrome_options = Options()
         chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--no-sandbox")
@@ -89,8 +89,8 @@ def find_on_dnyuz(target_title, category):
             "--blink-settings=imagesEnabled=false"
         )  # Disable images to speed up
 
-        # Use Chromium binary (installed by apt-get in Procfile)
-        service = Service("/usr/bin/chromium-browser")
+        # Use webdriver-manager to auto-download and manage ChromeDriver
+        service = ChromeService(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.set_page_load_timeout(10)
         driver.get(author_url)
