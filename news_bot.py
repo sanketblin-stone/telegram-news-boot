@@ -54,12 +54,95 @@ def normalize_title(title):
 
 def find_on_dnyuz(target_title, category):
     """
-    Peeks at a specific Dnyuz author page to find a matching title.
+    Peeks at a specific Dnyuz author page to find a matching title using direct search.
+    Falls back to multiple tag selectors if needed.
     """
     author_slug = SOURCE_MAPPING.get(category)
     if not author_slug:
         print(f"[DEBUG] No dnyuz mapping for {category}")
         return None
+
+    try:
+        author_url = f"https://dnyuz.com/author/{author_slug}/"
+        print(f"[DEBUG] Checking {author_url} for: {target_title[:50]}...")
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(author_url, headers=headers, timeout=10)
+
+        if response.status_code != 200:
+            print(f"[DEBUG] Bad status code: {response.status_code}")
+            return None
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        # Try multiple selectors to find articles
+        articles = []
+        # Try h3 with entry-title class
+        articles = soup.find_all("h3", class_="entry-title")
+        print(f"[DEBUG] Found {len(articles)} articles with h3.entry-title")
+
+        # If no h3, try h2
+        if not articles:
+            articles = soup.find_all("h2", class_="entry-title")
+            print(
+                f"[DEBUG] Fallback: Found {len(articles)} articles with h2.entry-title"
+            )
+
+        # If still nothing, try any article container with title
+        if not articles:
+            articles = soup.find_all(class_="post-title")
+            print(
+                f"[DEBUG] Fallback 2: Found {len(articles)} articles with class post-title"
+            )
+
+        normalized_target = normalize_title(target_title)
+        best_match = None
+        best_similarity = 0
+
+        for i, article in enumerate(articles[:20]):  # Check first 20 articles
+            link_tag = article.find("a")
+            if not link_tag:
+                # Try to get the link from the parent
+                parent = article.find_parent()
+                if parent:
+                    link_tag = parent.find("a")
+                if not link_tag:
+                    continue
+
+            found_title = link_tag.get_text().strip()
+            found_link = link_tag.get("href")
+
+            if not found_link or not found_title:
+                continue
+
+            # Fuzzy match check
+            similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
+            print(
+                f"[DEBUG] Article {i}: similarity={similarity}% for '{found_title[:50]}...'"
+            )
+
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match = found_link
+
+            if similarity > 85:
+                print(f"[DEBUG] ✅ MATCH FOUND! Returning: {found_link}")
+                return found_link
+
+        if best_match and best_similarity > 70:
+            print(
+                f"[DEBUG] ⚠️  PARTIAL MATCH ({best_similarity}%). Returning best match: {best_match}"
+            )
+            return best_match
+
+        print(f"[DEBUG] No match found (best was {best_similarity}%)")
+
+    except Exception as e:
+        print(f"[DEBUG] Error peeking at dnyuz author page: {e}")
+        import traceback
+
+        traceback.print_exc()
+
+    return None
 
     try:
         author_url = f"https://dnyuz.com/author/{author_slug}/"
