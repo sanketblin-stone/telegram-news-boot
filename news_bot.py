@@ -45,6 +45,11 @@ RSS_FEEDS = {
     "Washington Post": "https://feeds.washingtonpost.com/rss/world",
     "Politico": "https://rss.politico.com/politics-news.xml",
     "Wired": "https://www.wired.com/feed/rss",
+    "FT Global Economy": "https://www.ft.com/global-economy?format=rss",
+    "FT Emerging Markets": "https://www.ft.com/emerging-markets?format=rss",
+    "FT Companies": "https://www.ft.com/companies?format=rss",
+    "FT Work & Careers": "https://www.ft.com/work-careers?format=rss",
+    "FT Asia Pacific": "https://www.ft.com/world/asia-pacific?format=rss",
 }
 
 # Keeps track of article links we've already sent, so we don't repeat them.
