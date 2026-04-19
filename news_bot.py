@@ -18,7 +18,19 @@ from telegram.ext import (
 BOT_TOKEN = "8785893403:AAFxihc1urBoZQ_vizwlvA-ed1mZh23f8tk"
 MY_CHAT_ID = "6794301814"
 
-# Expanded RSS Feeds for Phase 2
+# Mapping RSS categories to Dnyuz Author pages
+SOURCE_MAPPING = {
+    "NYT World": "new-york-times",
+    "NYT Business": "new-york-times",
+    "NYT Tech": "new-york-times",
+    "NYT India": "new-york-times",
+    "NYT Lifestyle": "new-york-times",
+    "The Atlantic": "the-atlantic",
+    "Washington Post": "washington-post",
+    "Politico": "politico",
+    "Wired": "wired",
+}
+
 RSS_FEEDS = {
     "NYT World": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
     "NYT Business": "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
@@ -27,6 +39,9 @@ RSS_FEEDS = {
     "NYT Lifestyle": "https://rss.nytimes.com/services/xml/rss/nyt/PersonalTech.xml",
     "The Atlantic": "https://www.theatlantic.com/feed/all/",
     "Financial Times": "https://www.ft.com/news-feed?format=rss",
+    "Washington Post": "https://feeds.washingtonpost.com/rss/world",
+    "Politico": "https://www.politico.com/rss/politicopico.xml",
+    "Wired": "https://www.wired.com/feed/rss",
 }
 
 processed_links = set()
@@ -37,23 +52,25 @@ def normalize_title(title):
     return re.sub(r"\s+", " ", title.lower()).strip()
 
 
-def find_on_dnyuz(target_title):
+def find_on_dnyuz(target_title, category):
     """
-    Searches dnyuz.com for a matching title using a shortened "hook" query.
-    Returns the dnyuz link if a match (>90%) is found, else None.
+    Peeks at a specific Dnyuz author page to find a matching title.
     """
+    author_slug = SOURCE_MAPPING.get(category)
+    if not author_slug:
+        return None
+
     try:
-        # Use only first 6 words for a more reliable search result on dnyuz
-        search_query = " ".join(target_title.split()[:6])
-        search_url = f"https://dnyuz.com/?s={requests.utils.quote(search_query)}"
+        author_url = f"https://dnyuz.com/author/{author_slug}/"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(search_url, headers=headers, timeout=10)
+        response = requests.get(author_url, headers=headers, timeout=10)
 
         if response.status_code != 200:
             return None
 
         soup = BeautifulSoup(response.text, "html.parser")
-        articles = soup.find_all(["h2", "h3"], class_="entry-title")
+        # Author pages list articles in h3 tags with class entry-title
+        articles = soup.find_all("h3", class_="entry-title")
 
         normalized_target = normalize_title(target_title)
 
@@ -65,13 +82,13 @@ def find_on_dnyuz(target_title):
             found_title = link_tag.get_text()
             found_link = link_tag.get("href")
 
-            # Fuzzy match check against the FULL original title
+            # Fuzzy match check
             similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
-            if similarity > 85:  # Slightly lowered to 85% to be more forgiving
+            if similarity > 85:
                 return found_link
 
     except Exception as e:
-        print(f"Dnyuz search timed out or failed: {e}")
+        print(f"Error peeking at dnyuz author page: {e}")
 
     return None
 
@@ -85,21 +102,18 @@ def fetch_news():
     for category, feed_url in RSS_FEEDS.items():
         print(f"Fetching {category}...")
         feed = feedparser.parse(feed_url)
-        # Get top 2 from each feed to prevent timeouts
+        # Get top 2 from each feed
         for entry in feed.entries[:2]:
             if entry.link not in processed_links:
-                # Logic: Only check dnyuz for NYT and Atlantic
-                dnyuz_link = None
-                if "NYT" in category or "Atlantic" in category:
-                    dnyuz_link = find_on_dnyuz(entry.title)
+                # Logic: Use Source-Aware Peeking for Homelander links
+                dnyuz_link = find_on_dnyuz(entry.title, category)
 
                 if dnyuz_link:
                     final_link = dnyuz_link
                     link_label = "✅ (Homelander)"
                 else:
                     final_link = to_archive_link(entry.link)
-                    # Label it differently if we skipped the search vs if search failed
-                    if "NYT" in category or "Atlantic" in category:
+                    if category in SOURCE_MAPPING:
                         link_label = "🔗 (Archive Fallback)"
                     else:
                         link_label = "🔗 (Archive)"
@@ -125,7 +139,7 @@ def search_news(query):
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
             if query in entry.title.lower():
-                dnyuz_link = find_on_dnyuz(entry.title)
+                dnyuz_link = find_on_dnyuz(entry.title, category)
                 final_link = dnyuz_link if dnyuz_link else to_archive_link(entry.link)
 
                 results.append(
@@ -140,8 +154,8 @@ def search_news(query):
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "I'm your Phase 2 News Bot! I now check NYT, The Atlantic, and FT.\n\n"
-        "I'll try to find cleaner 'Homelander' links first, otherwise I'll give you an archive link."
+        "I'm your Phase 2.5 News Bot! Now with Source-Aware matching for NYT, Atlantic, WashPo, Politico, and Wired.\n\n"
+        "I peek at specific publisher pages for cleaner 'Homelander' links first."
     )
 
 
@@ -150,17 +164,18 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Fetching latest news from all sources...")
+    await update.message.reply_text(
+        "Fetching latest news from all sources (this may take a moment)..."
+    )
     news_items = fetch_news()
     if not news_items:
         await update.message.reply_text("No new news found in any of the feeds!")
         return
 
-    message = "📰 *Today's Multi-Source News*\n\n"
+    message = "📰 *Today's Smart News Digest*\n\n"
     for item in news_items:
         message += f"*{item['category']}:* {item['title']}\n{item['link_type']} {item['link']}\n\n"
 
-    # Telegram has a limit on message length, so we might need to split this if it gets too long
     if len(message) > 4000:
         for i in range(0, len(message), 4000):
             await update.message.reply_text(
@@ -182,16 +197,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await news_command(update, context)
         return
 
-    # Handle direct links sent by Sankey
     if any(
         domain in text_lower
-        for domain in ["nytimes.com", "theatlantic.com", "ft.com", "bloomberg.com"]
+        for domain in [
+            "nytimes.com",
+            "theatlantic.com",
+            "ft.com",
+            "bloomberg.com",
+            "washingtonpost.com",
+            "politico.com",
+            "wired.com",
+        ]
     ):
         links = re.findall(r"(https?://[^\s]+)", text)
         for link in links:
-            await update.message.reply_text("Checking if I can find a clean version...")
-            # We don't have the title for direct links easily, so we just archive it
-            # But in the future, we could fetch the title from the link first
+            await update.message.reply_text("Generating archive link...")
             archive_link = to_archive_link(link)
             await update.message.reply_text(
                 f"🔗 Here is your archive link:\n{archive_link}"
@@ -217,7 +237,7 @@ async def daily_digest(context: ContextTypes.DEFAULT_TYPE):
     if not news_items:
         return
 
-    message = "📰 *Your Phase 2 Daily Digest*\n\n"
+    message = "📰 *Your Phase 2.5 Daily Digest*\n\n"
     for item in news_items:
         message += f"*{item['category']}:* {item['title']}\n{item['link_type']} {item['link']}\n\n"
 
