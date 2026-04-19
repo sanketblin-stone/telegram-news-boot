@@ -204,6 +204,13 @@ async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("I'm awake and vibe coding, Sankey!")
 
 
+def escape_markdown(text):
+    """Escapes markdown special characters."""
+    # List of characters to escape for Markdown (not MarkdownV2)
+    # For standard Markdown, we mostly care about * and _
+    return text.replace("_", "\\_").replace("*", "\\*")
+
+
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Fetching latest news from all sources (this may take a moment)..."
@@ -215,7 +222,8 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     message = "📰 *Today's Smart News Digest*\n\n"
     for item in news_items:
-        message += f"*{item['category']}:* {item['title']}\n{item['link_type']} {item['link']}\n\n"
+        safe_title = escape_markdown(item["title"])
+        message += f"*{item['category']}:* {safe_title}\n{item['link_type']} {item['link']}\n\n"
 
     if len(message) > 4000:
         for i in range(0, len(message), 4000):
@@ -269,7 +277,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         message = f"🔍 *Search Results for '{text}'*\n\n"
         for item in search_results[:5]:
-            message += f"*{item['category']}:* {item['title']}\n🔗 {item['link']}\n\n"
+            safe_title = escape_markdown(item["title"])
+            message += f"*{item['category']}:* {safe_title}\n🔗 {item['link']}\n\n"
         await update.message.reply_text(message, parse_mode="Markdown")
 
 
@@ -280,7 +289,8 @@ async def daily_digest(context: ContextTypes.DEFAULT_TYPE):
 
     message = "📰 *Your Phase 2.5 Daily Digest*\n\n"
     for item in news_items:
-        message += f"*{item['category']}:* {item['title']}\n{item['link_type']} {item['link']}\n\n"
+        safe_title = escape_markdown(item["title"])
+        message += f"*{item['category']}:* {safe_title}\n{item['link_type']} {item['link']}\n\n"
 
     if len(message) > 4000:
         for i in range(0, len(message), 4000):
