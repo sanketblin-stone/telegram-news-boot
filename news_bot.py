@@ -72,40 +72,38 @@ def escape_markdown(text):
 # ─── DNYUZ / HOMELANDER LOOKUP ────────────────────────────────────────────────
 
 
-async def find_on_dnyuz(target_title, category):
+async def find_on_dnyuz(target_title, category=None):
     """
-    Tries to find a free version of an article on dnyuz.com.
+    Tries to find a free version of an article on dnyuz.com by searching their site directly.
 
-    How it works:
-    - dnyuz.com mirrors articles from major publishers under author slugs.
-    - We use Browserless.io (a cloud browser service) to load the author's page,
-      because dnyuz uses JavaScript to render content — a regular HTTP request
-      won't see the articles.
-    - We then compare article titles using fuzzy matching (like spell-check similarity)
-      to find the best match.
+    How it works (NEW approach — uses dnyuz search instead of author pages):
+    - dnyuz.com has a site-wide search at https://dnyuz.com/?s=<keywords>
+    - We send the article title as the search query.
+    - dnyuz returns a page of matching articles from ALL authors/publishers.
+    - We fuzzy-match the results to pick the best hit.
+    - This works for NYT, Atlantic, WashPost, Politico, Wired — any source dnyuz mirrors.
 
     Returns the dnyuz link if a good match is found, or None if not.
     """
-    if category not in SOURCE_MAPPING:
-        return None
-
     browserless_token = os.environ.get("BROWSERLESS_TOKEN")
     if not browserless_token:
         print("[DEBUG] BROWSERLESS_TOKEN not set, skipping Homelander lookup")
         return None
 
-    author_slug = SOURCE_MAPPING[category]
-    author_url = f"https://dnyuz.com/author/{author_slug}/"
+    # Build dnyuz search URL. urllib.parse.quote_plus handles spaces and special chars.
+    from urllib.parse import quote_plus
+
+    # Keep first 10 words of title as search query — long queries return poor results on dnyuz.
+    search_query = " ".join(target_title.split()[:10])
+    search_url = f"https://dnyuz.com/?s={quote_plus(search_query)}"
 
     try:
-        print(f"[DEBUG] Browserless: Loading {author_url} for: {target_title[:50]}...")
+        print(f"[DEBUG] Browserless: Searching dnyuz for: {target_title[:60]}...")
 
-        # httpx is an async HTTP library — it lets us make web requests without
-        # blocking the rest of the bot while waiting for a response.
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"https://production-sfo.browserless.io/content?token={browserless_token}",
-                json={"url": author_url},
+                json={"url": search_url},
                 timeout=30.0,
             )
 
@@ -113,39 +111,42 @@ async def find_on_dnyuz(target_title, category):
             print(f"[DEBUG] Browserless returned error status: {response.status_code}")
             return None
 
-        # BeautifulSoup parses the HTML so we can search it like a document.
         soup = BeautifulSoup(response.text, "html.parser")
-        # dnyuz currently wraps article titles in <h3 class="wps_post_title">
+        # Search results on dnyuz also use h3.wps_post_title, but we also check h2/h3 fallbacks.
         articles = soup.find_all("h3", class_="wps_post_title")
+        if not articles:
+            # Fallback: some search result layouts use different tags
+            articles = soup.select("h2 a, h3 a, article a")
+
         print(
-            f"[DEBUG] Found {len(articles)} articles on dnyuz for category: {category}"
+            f"[DEBUG] Found {len(articles)} search results on dnyuz for '{search_query}'"
         )
 
         normalized_target = normalize_title(target_title)
         best_match = None
         best_similarity = 0
 
-        for i, article in enumerate(articles[:20]):
-            link_tag = article.find("a")
-            if not link_tag:
+        for i, article in enumerate(articles[:15]):
+            # Handle both h3.wps_post_title (with <a> inside) and direct <a> tags
+            link_tag = article.find("a") if article.name in ("h2", "h3") else article
+            if not link_tag or not hasattr(link_tag, "get"):
                 continue
 
             found_title = link_tag.get_text().strip()
             found_link = link_tag.get("href")
 
-            if not found_link or not found_title:
+            if not found_link or not found_title or "dnyuz.com" not in found_link:
                 continue
 
-            # fuzz.ratio gives a 0–100 score for how similar two strings are.
             similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
-            print(f"[DEBUG] Article {i}: {similarity}% match for '{found_title[:50]}'")
+            print(f"[DEBUG] Result {i}: {similarity}% match for '{found_title[:60]}'")
 
             if similarity > best_similarity:
                 best_similarity = similarity
                 best_match = found_link
 
-            # 85%+ is a very confident match — return immediately.
-            if similarity > 85:
+            # 80%+ is a confident match via search — return immediately.
+            if similarity > 80:
                 print(f"[DEBUG] ✅ Strong match found! Similarity={similarity}%")
                 return found_link
 
