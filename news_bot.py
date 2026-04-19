@@ -221,23 +221,47 @@ async def fetch_news():
 
 
 async def search_news(query):
-    """Searches all RSS feeds for articles whose titles contain the given keyword."""
-    query = query.lower()
-    results = []
+    """
+    Searches all RSS feeds for articles whose titles contain the given keyword.
 
+    Two-step approach for speed:
+    1. First, scan all feeds quickly to find matching titles (no network calls).
+    2. Then, look up free dnyuz links for the top 5 matches in parallel.
+
+    This avoids timing out Telegram when the search has many matches.
+    """
+    query = query.lower()
+    matches = []
+
+    # Step 1: Collect all matching articles across all feeds (fast — text only).
     for category, feed_url in RSS_FEEDS.items():
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
             if query in entry.title.lower():
-                dnyuz_link = await find_on_dnyuz(entry.title, category)
-                final_link = dnyuz_link if dnyuz_link else to_archive_link(entry.link)
-                results.append(
-                    {
-                        "title": entry.title,
-                        "link": final_link,
-                        "category": category,
-                    }
-                )
+                matches.append((entry, category))
+
+    # Cap at top 5 — handle_message only displays 5 anyway, so no point looking up more.
+    matches = matches[:5]
+
+    if not matches:
+        return []
+
+    # Step 2: Run all dnyuz lookups in parallel instead of one by one.
+    # asyncio.gather fires them off simultaneously and waits for all to finish.
+    lookup_tasks = [find_on_dnyuz(entry.title, category) for entry, category in matches]
+    dnyuz_links = await asyncio.gather(*lookup_tasks)
+
+    # Step 3: Stitch the results together.
+    results = []
+    for (entry, category), dnyuz_link in zip(matches, dnyuz_links):
+        final_link = dnyuz_link if dnyuz_link else to_archive_link(entry.link)
+        results.append(
+            {
+                "title": entry.title,
+                "link": final_link,
+                "category": category,
+            }
+        )
 
     return results
 
