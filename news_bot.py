@@ -238,7 +238,7 @@ async def search_news(query):
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
             if query in entry.title.lower():
-                matches.append((entry, category))
+                matches.append({"entry": entry, "category": category})
 
     # Cap at top 5 — handle_message only displays 5 anyway, so no point looking up more.
     matches = matches[:5]
@@ -248,21 +248,18 @@ async def search_news(query):
 
     # Step 2: Run all dnyuz lookups in parallel instead of one by one.
     # asyncio.gather fires them off simultaneously and waits for all to finish.
-    lookup_tasks = [find_on_dnyuz(entry.title, category) for entry, category in matches]
-    dnyuz_links = await asyncio.gather(*lookup_tasks)
-
-    # Step 3: Stitch the results together.
-    results = []
-    for (entry, category), dnyuz_link in zip(matches, dnyuz_links):
+    async def process_match(match_dict):
+        entry = match_dict["entry"]
+        category = match_dict["category"]
+        dnyuz_link = await find_on_dnyuz(entry.title, category)
         final_link = dnyuz_link if dnyuz_link else to_archive_link(entry.link)
-        results.append(
-            {
-                "title": entry.title,
-                "link": final_link,
-                "category": category,
-            }
-        )
+        return {
+            "title": entry.title,
+            "link": final_link,
+            "category": category,
+        }
 
+    results = await asyncio.gather(*[process_match(m) for m in matches])
     return results
 
 
