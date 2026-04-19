@@ -88,7 +88,7 @@ async def find_on_dnyuz(target_title, category):
 
         # Parse the rendered HTML with BeautifulSoup
         soup = BeautifulSoup(response.text, "html.parser")
-        articles = soup.find_all("h3", class_="entry-title")
+        articles = soup.find_all("h3", class_="wps_post_title")
         print(f"[DEBUG] Found {len(articles)} articles on page")
 
         normalized_target = normalize_title(target_title)
