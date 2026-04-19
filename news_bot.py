@@ -19,6 +19,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.service import Service
 
 BOT_TOKEN = "8785893403:AAFxihc1urBoZQ_vizwlvA-ed1mZh23f8tk"
 MY_CHAT_ID = "6794301814"
@@ -59,13 +61,99 @@ def normalize_title(title):
 
 def find_on_dnyuz(target_title, category):
     """
-    Uses Selenium to load Dnyuz author page and find matching articles.
+    Uses Selenium with Chromium to load Dnyuz author page and find matching articles.
     Handles JavaScript-rendered content properly.
     """
     author_slug = SOURCE_MAPPING.get(category)
     if not author_slug:
         print(f"[DEBUG] No dnyuz mapping for {category}")
         return None
+
+    driver = None
+    try:
+        author_url = f"https://dnyuz.com/author/{author_slug}/"
+        print(f"[DEBUG] Selenium: Loading {author_url} for: {target_title[:50]}...")
+
+        # Set up Chromium options for headless mode
+        chrome_options = Options()
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-web-resources")
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument(
+            "user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+        )
+        chrome_options.add_argument(
+            "--blink-settings=imagesEnabled=false"
+        )  # Disable images to speed up
+
+        # Use Chromium binary (installed by apt-get in Procfile)
+        service = Service("/usr/bin/chromium-browser")
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver.set_page_load_timeout(10)
+        driver.get(author_url)
+
+        # Wait for articles to load (h3 with entry-title class)
+        WebDriverWait(driver, 8).until(
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "h3.entry-title a"))
+        )
+        print(f"[DEBUG] Page loaded, searching for articles...")
+
+        # Parse the rendered HTML with BeautifulSoup
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        articles = soup.find_all("h3", class_="entry-title")
+        print(f"[DEBUG] Found {len(articles)} articles on page")
+
+        normalized_target = normalize_title(target_title)
+        best_match = None
+        best_similarity = 0
+
+        for i, article in enumerate(articles[:20]):
+            link_tag = article.find("a")
+            if not link_tag:
+                continue
+
+            found_title = link_tag.get_text().strip()
+            found_link = link_tag.get("href")
+
+            if not found_link or not found_title:
+                continue
+
+            similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
+            print(
+                f"[DEBUG] Article {i}: similarity={similarity}% for '{found_title[:50]}...'"
+            )
+
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match = found_link
+
+            if similarity > 85:
+                print(f"[DEBUG] ✅ MATCH FOUND! Similarity={similarity}%")
+                return found_link
+
+        if best_match and best_similarity > 70:
+            print(f"[DEBUG] ⚠️  PARTIAL MATCH ({best_similarity}%). Using it.")
+            return best_match
+
+        print(f"[DEBUG] No match found (best was {best_similarity}%)")
+
+    except Exception as e:
+        print(f"[DEBUG] Selenium error: {e}")
+        import traceback
+
+        traceback.print_exc()
+
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
+
+    return None
 
     driver = None
     try:

@@ -6,3 +6,4 @@ thefuzz
 python-Levenshtein
 beautifulsoup4
 selenium
+webdriver-manager
