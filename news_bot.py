@@ -70,7 +70,7 @@ def find_on_dnyuz(target_title):
                 return found_link
 
     except Exception as e:
-        print(f"Error searching dnyuz: {e}")
+        print(f"Dnyuz search timed out or failed: {e}")
 
     return None
 
@@ -82,14 +82,20 @@ def to_archive_link(url):
 def fetch_news():
     news = []
     for category, feed_url in RSS_FEEDS.items():
+        print(f"Fetching {category}...")
         feed = feedparser.parse(feed_url)
-        # Get top 3 from each feed to keep it manageable
-        for entry in feed.entries[:3]:
+        # Get top 2 from each feed to prevent timeouts
+        for entry in feed.entries[:2]:
             if entry.link not in processed_links:
                 # Logic: Check dnyuz (Homelander) first, else Archive.is
                 dnyuz_link = find_on_dnyuz(entry.title)
-                final_link = dnyuz_link if dnyuz_link else to_archive_link(entry.link)
-                is_homelander = "✅ (Homelander)" if dnyuz_link else "🔗 (Archive)"
+
+                if dnyuz_link:
+                    final_link = dnyuz_link
+                    link_label = "✅ (Homelander)"
+                else:
+                    final_link = to_archive_link(entry.link)
+                    link_label = "🔗 (Archive Fallback)"
 
                 news.append(
                     {
@@ -97,7 +103,7 @@ def fetch_news():
                         "link": final_link,
                         "category": category,
                         "original_link": entry.link,
-                        "link_type": is_homelander,
+                        "link_type": link_label,
                     }
                 )
                 processed_links.add(entry.link)
