@@ -14,14 +14,6 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-# Selenium disabled - see find_on_dnyuz() for details
-# from selenium import webdriver
-# from selenium.webdriver.common.by import By
-# from selenium.webdriver.support.ui import WebDriverWait
-# from selenium.webdriver.support import expected_conditions as EC
-# from selenium.webdriver.chrome.options import Options
-# from webdriver_manager.chrome import ChromeDriverManager
-# from selenium.webdriver.chrome.service import Service as ChromeService
 
 BOT_TOKEN = "8785893403:AAFxihc1urBoZQ_vizwlvA-ed1mZh23f8tk"
 MY_CHAT_ID = "6794301814"
@@ -60,296 +52,97 @@ def normalize_title(title):
     return re.sub(r"\s+", " ", title.lower()).strip()
 
 
-def find_on_dnyuz(target_title, category):
+async def find_on_dnyuz(target_title, category):
     """
-    Homelander feature currently disabled on Railway due to Selenium/Chrome setup issues.
-    Falls back to Archive links for all articles.
-    TODO: Consider alternative approaches (Playwright, Puppeteer, or static scraping workarounds)
+    Uses Playwright to load dnyuz author pages and fuzzy-match article titles.
+    Returns a dnyuz link if a high-confidence match is found, None otherwise.
     """
-    # For now, return None to always use Archive links
-    # Homelander matching requires JavaScript rendering which is problematic on Railway
-    return None
+    if category not in SOURCE_MAPPING:
+        return None
 
-    driver = None
+    author_slug = SOURCE_MAPPING[category]
+    author_url = f"https://dnyuz.com/author/{author_slug}/"
+
+    browser = None
     try:
-        author_url = f"https://dnyuz.com/author/{author_slug}/"
-        print(f"[DEBUG] Selenium: Loading {author_url} for: {target_title[:50]}...")
+        print(f"[DEBUG] Playwright: Loading {author_url} for: {target_title[:50]}...")
 
-        # Set up Chrome options for headless mode
-        chrome_options = Options()
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--disable-web-resources")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument(
-            "user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
-        )
-        chrome_options.add_argument(
-            "--blink-settings=imagesEnabled=false"
-        )  # Disable images to speed up
+        # Import playwright here to avoid import errors if not installed
+        from playwright.async_api import async_playwright
 
-        # Use webdriver-manager to auto-download and manage ChromeDriver
-        service = ChromeService(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        driver.set_page_load_timeout(10)
-        driver.get(author_url)
+        async with async_playwright() as p:
+            # Launch Chromium browser
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            page.set_default_timeout(10000)  # 10 second timeout
 
-        # Wait for articles to load (h3 with entry-title class)
-        WebDriverWait(driver, 8).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "h3.entry-title a"))
-        )
-        print(f"[DEBUG] Page loaded, searching for articles...")
+            # Navigate to author page
+            await page.goto(author_url, wait_until="networkidle")
+            print(f"[DEBUG] Page loaded, searching for articles...")
 
-        # Parse the rendered HTML with BeautifulSoup
-        soup = BeautifulSoup(driver.page_source, "html.parser")
-        articles = soup.find_all("h3", class_="entry-title")
-        print(f"[DEBUG] Found {len(articles)} articles on page")
+            # Wait for article titles to load
+            await page.wait_for_selector("h3.entry-title a", timeout=8000)
 
-        normalized_target = normalize_title(target_title)
-        best_match = None
-        best_similarity = 0
-
-        for i, article in enumerate(articles[:20]):
-            link_tag = article.find("a")
-            if not link_tag:
-                continue
-
-            found_title = link_tag.get_text().strip()
-            found_link = link_tag.get("href")
-
-            if not found_link or not found_title:
-                continue
-
-            similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
-            print(
-                f"[DEBUG] Article {i}: similarity={similarity}% for '{found_title[:50]}...'"
+            # Get all article links and titles from the page
+            articles_data = await page.evaluate(
+                """
+                () => {
+                    const articles = [];
+                    document.querySelectorAll("h3.entry-title a").forEach(link => {
+                        articles.push({
+                            title: link.textContent.trim(),
+                            href: link.href
+                        });
+                    });
+                    return articles;
+                }
+                """
             )
 
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_match = found_link
+            print(f"[DEBUG] Found {len(articles_data)} articles on page")
 
-            if similarity > 85:
-                print(f"[DEBUG] ✅ MATCH FOUND! Similarity={similarity}%")
-                return found_link
+            normalized_target = normalize_title(target_title)
+            best_match = None
+            best_similarity = 0
 
-        if best_match and best_similarity > 70:
-            print(f"[DEBUG] ⚠️  PARTIAL MATCH ({best_similarity}%). Using it.")
-            return best_match
+            for i, article in enumerate(articles_data[:20]):
+                found_title = article["title"]
+                found_link = article["href"]
 
-        print(f"[DEBUG] No match found (best was {best_similarity}%)")
-
-    except Exception as e:
-        print(f"[DEBUG] Selenium error: {e}")
-        import traceback
-
-        traceback.print_exc()
-
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except:
-                pass
-
-    return None
-
-    driver = None
-    try:
-        author_url = f"https://dnyuz.com/author/{author_slug}/"
-        print(f"[DEBUG] Selenium: Loading {author_url} for: {target_title[:50]}...")
-
-        # Set up Chrome options for headless mode (no GUI)
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("user-agent=Mozilla/5.0")
-
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.set_page_load_timeout(10)
-        driver.get(author_url)
-
-        # Wait for articles to load (h3 with entry-title class)
-        WebDriverWait(driver, 8).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "h3.entry-title a"))
-        )
-        print(f"[DEBUG] Page loaded, searching for articles...")
-
-        # Parse the rendered HTML with BeautifulSoup
-        soup = BeautifulSoup(driver.page_source, "html.parser")
-        articles = soup.find_all("h3", class_="entry-title")
-        print(f"[DEBUG] Found {len(articles)} articles on page")
-
-        normalized_target = normalize_title(target_title)
-        best_match = None
-        best_similarity = 0
-
-        for i, article in enumerate(articles[:20]):
-            link_tag = article.find("a")
-            if not link_tag:
-                continue
-
-            found_title = link_tag.get_text().strip()
-            found_link = link_tag.get("href")
-
-            if not found_link or not found_title:
-                continue
-
-            similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
-            print(
-                f"[DEBUG] Article {i}: similarity={similarity}% for '{found_title[:50]}...'"
-            )
-
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_match = found_link
-
-            if similarity > 85:
-                print(f"[DEBUG] ✅ MATCH FOUND! Similarity={similarity}%")
-                return found_link
-
-        if best_match and best_similarity > 70:
-            print(f"[DEBUG] ⚠️  PARTIAL MATCH ({best_similarity}%). Using it.")
-            return best_match
-
-        print(f"[DEBUG] No match found (best was {best_similarity}%)")
-
-    except Exception as e:
-        print(f"[DEBUG] Selenium error: {e}")
-        import traceback
-
-        traceback.print_exc()
-
-    finally:
-        if driver:
-            driver.quit()
-
-    return None
-
-    try:
-        author_url = f"https://dnyuz.com/author/{author_slug}/"
-        print(f"[DEBUG] Checking {author_url} for: {target_title[:50]}...")
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(author_url, headers=headers, timeout=10)
-
-        if response.status_code != 200:
-            print(f"[DEBUG] Bad status code: {response.status_code}")
-            return None
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # Try multiple selectors to find articles
-        articles = []
-        # Try h3 with entry-title class
-        articles = soup.find_all("h3", class_="entry-title")
-        print(f"[DEBUG] Found {len(articles)} articles with h3.entry-title")
-
-        # If no h3, try h2
-        if not articles:
-            articles = soup.find_all("h2", class_="entry-title")
-            print(
-                f"[DEBUG] Fallback: Found {len(articles)} articles with h2.entry-title"
-            )
-
-        # If still nothing, try any article container with title
-        if not articles:
-            articles = soup.find_all(class_="post-title")
-            print(
-                f"[DEBUG] Fallback 2: Found {len(articles)} articles with class post-title"
-            )
-
-        normalized_target = normalize_title(target_title)
-        best_match = None
-        best_similarity = 0
-
-        for i, article in enumerate(articles[:20]):  # Check first 20 articles
-            link_tag = article.find("a")
-            if not link_tag:
-                # Try to get the link from the parent
-                parent = article.find_parent()
-                if parent:
-                    link_tag = parent.find("a")
-                if not link_tag:
+                if not found_link or not found_title:
                     continue
 
-            found_title = link_tag.get_text().strip()
-            found_link = link_tag.get("href")
+                similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
+                print(
+                    f"[DEBUG] Article {i}: similarity={similarity}% for '{found_title[:50]}...'"
+                )
 
-            if not found_link or not found_title:
-                continue
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_match = found_link
 
-            # Fuzzy match check
-            similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
-            print(
-                f"[DEBUG] Article {i}: similarity={similarity}% for '{found_title[:50]}...'"
-            )
+                if similarity > 85:
+                    print(f"[DEBUG] ✅ MATCH FOUND! Similarity={similarity}%")
+                    return found_link
 
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_match = found_link
+            if best_match and best_similarity > 70:
+                print(f"[DEBUG] ⚠️  PARTIAL MATCH ({best_similarity}%). Using it.")
+                return best_match
 
-            if similarity > 85:
-                print(f"[DEBUG] ✅ MATCH FOUND! Returning: {found_link}")
-                return found_link
-
-        if best_match and best_similarity > 70:
-            print(
-                f"[DEBUG] ⚠️  PARTIAL MATCH ({best_similarity}%). Returning best match: {best_match}"
-            )
-            return best_match
-
-        print(f"[DEBUG] No match found (best was {best_similarity}%)")
+            print(f"[DEBUG] No match found (best was {best_similarity}%)")
 
     except Exception as e:
-        print(f"[DEBUG] Error peeking at dnyuz author page: {e}")
+        print(f"[DEBUG] Playwright error: {e}")
         import traceback
 
         traceback.print_exc()
 
-    return None
-
-    try:
-        author_url = f"https://dnyuz.com/author/{author_slug}/"
-        print(f"[DEBUG] Checking {author_url} for: {target_title[:50]}...")
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(author_url, headers=headers, timeout=10)
-
-        if response.status_code != 200:
-            print(f"[DEBUG] Bad status code: {response.status_code}")
-            return None
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        # Author pages list articles in h3 tags with class entry-title
-        articles = soup.find_all("h3", class_="entry-title")
-        print(f"[DEBUG] Found {len(articles)} articles on dnyuz author page")
-
-        normalized_target = normalize_title(target_title)
-
-        for i, article in enumerate(articles):
-            link_tag = article.find("a")
-            if not link_tag:
-                continue
-
-            found_title = link_tag.get_text()
-            found_link = link_tag.get("href")
-
-            # Fuzzy match check
-            similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
-            print(
-                f"[DEBUG] Article {i}: similarity={similarity}% for '{found_title[:50]}...'"
-            )
-            if similarity > 85:
-                print(f"[DEBUG] ✅ MATCH FOUND! Returning: {found_link}")
-                return found_link
-
-        print(f"[DEBUG] No match found (best was <85%)")
-
-    except Exception as e:
-        print(f"[DEBUG] Error peeking at dnyuz author page: {e}")
+    finally:
+        if browser:
+            try:
+                await browser.close()
+            except:
+                pass
 
     return None
 
@@ -358,7 +151,7 @@ def to_archive_link(url):
     return f"https://archive.is/newest/{url}"
 
 
-def fetch_news():
+async def fetch_news():
     news = []
     for category, feed_url in RSS_FEEDS.items():
         print(f"Fetching {category}...")
@@ -367,7 +160,7 @@ def fetch_news():
         for entry in feed.entries[:2]:
             if entry.link not in processed_links:
                 # Logic: Use Source-Aware Peeking for Homelander links
-                dnyuz_link = find_on_dnyuz(entry.title, category)
+                dnyuz_link = await find_on_dnyuz(entry.title, category)
 
                 if dnyuz_link:
                     final_link = dnyuz_link
@@ -392,7 +185,7 @@ def fetch_news():
     return news
 
 
-def search_news(query):
+async def search_news(query):
     """Looks for a specific word in all news categories."""
     query = query.lower()
     results = []
@@ -400,7 +193,7 @@ def search_news(query):
         feed = feedparser.parse(feed_url)
         for entry in feed.entries:
             if query in entry.title.lower():
-                dnyuz_link = find_on_dnyuz(entry.title, category)
+                dnyuz_link = await find_on_dnyuz(entry.title, category)
                 final_link = dnyuz_link if dnyuz_link else to_archive_link(entry.link)
 
                 results.append(
@@ -428,7 +221,7 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Fetching latest news from all sources (this may take a moment)..."
     )
-    news_items = fetch_news()
+    news_items = await fetch_news()
     if not news_items:
         await update.message.reply_text("No new news found in any of the feeds!")
         return
@@ -480,7 +273,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await update.message.reply_text(f"Searching for news about '{text}'...")
-    search_results = search_news(text)
+    search_results = await search_news(text)
 
     if not search_results:
         await update.message.reply_text(
@@ -494,7 +287,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def daily_digest(context: ContextTypes.DEFAULT_TYPE):
-    news_items = fetch_news()
+    news_items = await fetch_news()
     if not news_items:
         return
 
