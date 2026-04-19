@@ -5,5 +5,3 @@ pytz
 thefuzz
 python-Levenshtein
 beautifulsoup4
-playwright
-greenlet

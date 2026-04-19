@@ -1,1 +1,1 @@
-worker: playwright install chromium && python3 news_bot.py
+worker: python3 news_bot.py

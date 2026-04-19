@@ -54,95 +54,82 @@ def normalize_title(title):
 
 async def find_on_dnyuz(target_title, category):
     """
-    Uses Playwright to load dnyuz author pages and fuzzy-match article titles.
+    Uses Browserless.io API to load dnyuz author pages and fuzzy-match article titles.
+    Browserless runs the browser on their servers — no local Chrome needed.
     Returns a dnyuz link if a high-confidence match is found, None otherwise.
     """
     if category not in SOURCE_MAPPING:
         return None
 
+    import os
+
+    browserless_token = os.environ.get("BROWSERLESS_TOKEN")
+    if not browserless_token:
+        print("[DEBUG] BROWSERLESS_TOKEN not set, skipping Homelander")
+        return None
+
     author_slug = SOURCE_MAPPING[category]
     author_url = f"https://dnyuz.com/author/{author_slug}/"
 
-    browser = None
     try:
-        print(f"[DEBUG] Playwright: Loading {author_url} for: {target_title[:50]}...")
+        print(f"[DEBUG] Browserless: Loading {author_url} for: {target_title[:50]}...")
 
-        # Import playwright here to avoid import errors if not installed
-        from playwright.async_api import async_playwright
+        # Call Browserless /content endpoint — it loads the page with a real browser
+        # and returns the fully-rendered HTML (including JavaScript-loaded content)
+        response = requests.post(
+            f"https://production-sfo.browserless.io/content?token={browserless_token}",
+            json={"url": author_url},
+            timeout=30,
+        )
 
-        async with async_playwright() as p:
-            # Launch Chromium browser
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
-            page.set_default_timeout(10000)  # 10 second timeout
+        if response.status_code != 200:
+            print(f"[DEBUG] Browserless error: status {response.status_code}")
+            return None
 
-            # Navigate to author page
-            await page.goto(author_url, wait_until="networkidle")
-            print(f"[DEBUG] Page loaded, searching for articles...")
+        # Parse the rendered HTML with BeautifulSoup
+        soup = BeautifulSoup(response.text, "html.parser")
+        articles = soup.find_all("h3", class_="entry-title")
+        print(f"[DEBUG] Found {len(articles)} articles on page")
 
-            # Wait for article titles to load
-            await page.wait_for_selector("h3.entry-title a", timeout=8000)
+        normalized_target = normalize_title(target_title)
+        best_match = None
+        best_similarity = 0
 
-            # Get all article links and titles from the page
-            articles_data = await page.evaluate(
-                """
-                () => {
-                    const articles = [];
-                    document.querySelectorAll("h3.entry-title a").forEach(link => {
-                        articles.push({
-                            title: link.textContent.trim(),
-                            href: link.href
-                        });
-                    });
-                    return articles;
-                }
-                """
+        for i, article in enumerate(articles[:20]):
+            link_tag = article.find("a")
+            if not link_tag:
+                continue
+
+            found_title = link_tag.get_text().strip()
+            found_link = link_tag.get("href")
+
+            if not found_link or not found_title:
+                continue
+
+            similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
+            print(
+                f"[DEBUG] Article {i}: similarity={similarity}% for '{found_title[:50]}'"
             )
 
-            print(f"[DEBUG] Found {len(articles_data)} articles on page")
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_match = found_link
 
-            normalized_target = normalize_title(target_title)
-            best_match = None
-            best_similarity = 0
+            if similarity > 85:
+                print(f"[DEBUG] ✅ MATCH FOUND! Similarity={similarity}%")
+                return found_link
 
-            for i, article in enumerate(articles_data[:20]):
-                found_title = article["title"]
-                found_link = article["href"]
+        if best_match and best_similarity > 70:
+            print(f"[DEBUG] ⚠️  PARTIAL MATCH ({best_similarity}%). Using it.")
+            return best_match
 
-                if not found_link or not found_title:
-                    continue
-
-                similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
-                print(
-                    f"[DEBUG] Article {i}: similarity={similarity}% for '{found_title[:50]}...'"
-                )
-
-                if similarity > best_similarity:
-                    best_similarity = similarity
-                    best_match = found_link
-
-                if similarity > 85:
-                    print(f"[DEBUG] ✅ MATCH FOUND! Similarity={similarity}%")
-                    return found_link
-
-            if best_match and best_similarity > 70:
-                print(f"[DEBUG] ⚠️  PARTIAL MATCH ({best_similarity}%). Using it.")
-                return best_match
-
-            print(f"[DEBUG] No match found (best was {best_similarity}%)")
+        print(f"[DEBUG] No match found (best was {best_similarity}%)")
 
     except Exception as e:
-        print(f"[DEBUG] Playwright error: {e}")
+        print(f"[DEBUG] Browserless error: {e}")
         import traceback
 
         traceback.print_exc()
-
-    finally:
-        if browser:
-            try:
-                await browser.close()
-            except:
-                pass
 
     return None
 
