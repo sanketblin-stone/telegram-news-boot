@@ -58,23 +58,27 @@ def find_on_dnyuz(target_title, category):
     """
     author_slug = SOURCE_MAPPING.get(category)
     if not author_slug:
+        print(f"[DEBUG] No dnyuz mapping for {category}")
         return None
 
     try:
         author_url = f"https://dnyuz.com/author/{author_slug}/"
+        print(f"[DEBUG] Checking {author_url} for: {target_title[:50]}...")
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(author_url, headers=headers, timeout=10)
 
         if response.status_code != 200:
+            print(f"[DEBUG] Bad status code: {response.status_code}")
             return None
 
         soup = BeautifulSoup(response.text, "html.parser")
         # Author pages list articles in h3 tags with class entry-title
         articles = soup.find_all("h3", class_="entry-title")
+        print(f"[DEBUG] Found {len(articles)} articles on dnyuz author page")
 
         normalized_target = normalize_title(target_title)
 
-        for article in articles:
+        for i, article in enumerate(articles):
             link_tag = article.find("a")
             if not link_tag:
                 continue
@@ -84,11 +88,17 @@ def find_on_dnyuz(target_title, category):
 
             # Fuzzy match check
             similarity = fuzz.ratio(normalized_target, normalize_title(found_title))
+            print(
+                f"[DEBUG] Article {i}: similarity={similarity}% for '{found_title[:50]}...'"
+            )
             if similarity > 85:
+                print(f"[DEBUG] ✅ MATCH FOUND! Returning: {found_link}")
                 return found_link
 
+        print(f"[DEBUG] No match found (best was <85%)")
+
     except Exception as e:
-        print(f"Error peeking at dnyuz author page: {e}")
+        print(f"[DEBUG] Error peeking at dnyuz author page: {e}")
 
     return None
 
